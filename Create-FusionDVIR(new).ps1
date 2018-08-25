@@ -1,4 +1,4 @@
-﻿<#
+<#
 New Fusion/DVIR account creation
 Version 3.0
 Author: David Nauendorf
@@ -6,6 +6,28 @@ requires -version 3
 #>
 
 ################################ Start Functions ##################################
+
+# Check for existing email address
+Function Get-Existing {
+
+Param
+(
+    [parameter(Mandatory=$true)]$Email
+)
+
+$Searcher = [adsisearcher]"(&(objectCategory=person)(objectClass=User)(mail=$Email))"
+$Searcher_Contact = [adsisearcher]"(&(objectCategory=person)(objectClass=contact)(mail=$Email))"
+
+    If ( ( ($Searcher.FindAll().Path) -eq $null) -and ( ($Searcher_Contact.FindAll().Path) -eq $null) )
+    {
+        return $false
+    }
+    Else
+    {
+        $Script:Path =  ($Searcher.FindAll().Path)
+        return $true
+    }
+}
 
 # Scrolls to the bottom of the output box
 Function ScrollDown
@@ -120,7 +142,7 @@ Function Generate-Password
     Return $Upper+$Lower+$number
 }
 
-# Creates the account
+# Creates the account. This function is called from the event handler for the Create button
 Function CreateAccount
 {
 Param (
@@ -131,59 +153,91 @@ Param (
         [Parameter(Position=2)]
         [string]$Lastname,
         [Parameter(Position=3)]
-        [string]$Email
+        [string]$EmailAddress,
+        [Parameter(Position=3)]
+        [string]$RequestNumber
        )
-Add-PSSnapin Microsoft.Exchange.Management.PowerShell.E2010 ## Adds exchange cmdlets to the session
+Try{Add-PSSnapin Microsoft.Exchange.Management.PowerShell.E2010} ## Adds exchange cmdlets to the session 
+Catch{
+        $OutputTxt.AppendText("Error: Unabel to load Exchange PSSnapin...")
+        ScrollDown
+        AppendLog -LogText "Error: Unabel to load Exchange PSSnapin..." -Errors -Time
+      }
 
 ### Account creation logic
 
+AppendLog -LogText "Creating AD object" -Time
+$OutputTxt.AppendText("`n Creating the AD object")
+ScrollDown
+$ErrorActionPreference = 'silentlycontinue'
+$Date = Get-Date -Format d
 $NewUserName = $(Generate-Username)
 $NewUserName = $NewUserName.ToUpper()
-$NewUserPassword = $(Generate-Password)
-$Passwd = convertto-securestring $NewUserPassword -asplaintext -force
+# $NewUserPassword = $(Generate-Password)
+#$Passwd = convertto-securestring $NewUserPassword -asplaintext -force
 $Displayname = "$Firstname $Lastname"
-$Description = @"
-
-
-"@
+$Description += "Created $Date $RequestNumber by $ENV:USERNAME;"
     Try
-    {
-
-        If ($AccountType -eq "Fusion")
-        { $OU = "OU=" }
+    { # Create AD object
+        If ($AccountType -eq "Fusion") # Set OU depending on account type
+        { 
+        $OU = "OU="
+        $Memberof = ""
+        $NewUserPassword = ""
+        $SecurePasswd = ConvertTo-SecureString $NewUserPassword -AsPlainText -Force
+        }
         ElseIf ($AccountType -eq "DVIR")
-        { $OU = "OU=" }
+        { 
+        $OU = "OU=" 
+        $Memberof = ""
+        $NewUserPassword = ""
+        $SecurePasswd = ConvertTo-SecureString $NewUserPassword -AsPlainText -Force
+        }
 
-        $ldap = [adsi]$OU
-        If ($Initial -eq $null){$NewUser = $ldap.create("user", "cn=$FirstName $LastName")}
-        else {$NewUser = $ldap.create("user", "cn=$FirstName $LastName")}
-        $NewUser.Put("sAMAccountName", $NewUserName)
-        $NewUser.Put("Description", "$description")
-        $NewUser.SetInfo()
-        AppendLog -LogText "Done with first set" -Time
+        New-ADUser -Name "$Firstname $Lastname" `
+                   -GivenName $Firstname `
+                   -Surname $Lastname `
+                   -DisplayName "$Firstname $Lastname" `
+                   -UserPrincipalName "$NewUserName@dcd.wa.gov.au" `
+                   -samAccountName $NewUserName `
+                   -Path $OU `
+                   -ChangePasswordAtLogon $true
+        Start-Sleep 3
+        
+        Set-ADAccountPassword -Identity $NewUserName `
+                              -Reset `
+                              -NewPassword $SecurePasswd
 
-        $NewUser.Put("givenName", "$Firstname")
-        $NewUser.Put("sn", "$LastName")
-        $NewUser.Put("displayName", "$Displayname")
-        $NewUser.Put("c", "AU")
-        $NewUser.Put("userPrincipalName", "$NewUserName`@ad.dcd.wa.gov.au")
-        $NewUser.SetPassword($Passwd)
-        $NewUser.Put("pwdLastSet", "0")
-        $NewUser.SetInfo()
-        AppendLog -LogText "Done with second set" -Time
+        Set-aduser $NewUserName -changepasswordatlogon $true -Description $Description
 
-        ### Set account specific properties (Membership, email forward, default email dcd)
+        $NewUserName | Enable-ADAccount
+                              
+        $OutputTxt.AppendText("`n Waiting for account")                      
+        $Searcher = [adsiSearcher]"(samAccountName=$NewUserName)"
+        $Result = $Searcher.FindAll()
+        If ($Result.Count -lt 1){Start-Sleep 2}
+
+        Add-ADGroupMember -Identity $Memberof -Members $NewUserName
+        $OutputTxt.AppendText("`n Finished configuring AD account")
+        ScrollDown
+        AppendLog -LogText "Added user to $Memberof" -Time
     }
     Catch
     {
-        AppendLog -LogText "There was an error creating the AD account" -Errors -Time
+        AppendLog -LogText $Error[0] -Errors -Time
+        $OutputTxt.AppendText("`n [Error] Something went wrong configuring the AD account. See logs for details")
+        ScrollDown
+        $ErrorCount = 1
     }
 
     # Create mailbox for new user
     Try
     {
         AppendLog -LogText "Creating Exchange Session" -Time
-        $EXURI = "http://ExchangeServerFQDN/Powershell"
+        $OutputTxt.AppendText("`n Creating the mailbox")
+        ScrollDown
+        $EXURI = "http://EschangeServerFQDN/Powershell"
+        $PrimarySMTP = "$Firstname.$Lastname@dcd.wa.gov.au"
         $ExchangeSession = New-PSSession -ConfigurationName microsoft.exchange -ConnectionURI $EXURI 
         Import-PSSession $ExchangeSession -DisableNameChecking | Out-Null
         AppendLog "Imported"
@@ -196,21 +250,78 @@ $Description = @"
                       Select-Object Name | 
                       ForEach {$_.Name}
         AppendLog -LogText "Found smallest DB is $SmallestDB" -Time
-        Enable-Mailbox -Identity "DCD\$NewUserName" -Database $SmallestDB | Out-Null
+        Enable-Mailbox -Identity "$NewUserName" -Database $SmallestDB -Alias "$NewUserName" | Out-Null
         AppendLog -LogText "Enabled Mailbox" -Time
-        Get-PSSession | Remove-PSSession
+        $OutputTxt.AppendText("`n Mailbox successfully created")
+       
     }
     Catch
     {
-        AppendLog -LogText "There was an error creating the users mailbox" -Errors -Time
+        AppendLog -LogText $Error[0] -Errors -Time
+        $OutputTxt.AppendText("`n [Error] Something went wrong configuring the users mailbox. See logs for details")
+        ScrollDown
+        $ErrorCount = 1
     }
     Finally
     {
         Get-PSSession | Remove-PSSession
     }
 
+    Try
+    {
+        $OU = "OU=" # OU for external contacts, used to create contact and set description
+        AppendLog -LogText "Creating mail contact" -Time
+        $OutputTxt.AppendText("`n Creating mail contact")
+        ScrollDown
+        New-MailContact -FirstName $FirstName `
+                        -LastName $LastName `
+                        -Name $Displayname `
+                        -ExternalEmailAddress $EmailAddress `
+                        -OrganizationalUnit $OU `
+                        -Alias "$FirstName$LastName"
+        $OutputTxt.AppendText("`n Mail contact successfully created")
+        ScrollDown
+        Start-Sleep 5
 
+        $OutputTxt.AppendText("`n Configuring the mail contact")
+        ScrollDown
+        Set-MailContact "$Firstname$Lastname" -HiddenFromAddressListsEnabled $true # Hide contact from GAL
+        # Set description for AD contact object (not the exchange contact)      
 
+        $ADobject = Get-ADObject -LDAPFilter "ObjectCategory=Contact" -SearchBase $OU | Where-Object {$_.DistinguishedName -like "*$FirstName $LastName*"} # Variable containing AD contact object
+        Set-ADObject -Identity $ADobject -Description $Description # Set description for AD contact object
+
+        AppendLog -LogText "Set mailbox hidden, forward, primary SMTP" -Time
+        $OutputTxt.AppendText("`n The mail contact has been configured")
+        ScrollDown
+
+        Start-Sleep 3
+        $OutputTxt.AppendText("`n Configuring mailbox")
+        Set-Mailbox -Identity $NewUserName -ForwardingAddress $EmailAddress # Set email forward
+        $OutputTxt.AppendText("`n Setting mail forward")
+        Set-Mailbox -Identity $NewUserName -EmailAddressPolicyEnabled $false -PrimarySMTPAddress $PrimarySMTP # set primary SMPT to DCD
+        $OutputTxt.AppendText("`n Setting primary SMTP")
+        Set-Mailbox -Identity $NewUserName -HiddenFromAddressListsEnabled $true # Hide mailbox from GAL
+        $OutputTxt.AppendText("`n Hiding from GAL")
+
+        Write-Host "Finished configuring mailbox"
+        AppendLog -LogText "Finished configuring mail contact" -Time
+        $OutputTxt.AppendText("`n Finished configuring mailbox")
+        ScrollDown
+        Get-PSSession | Remove-PSSession
+    }
+    Catch
+    {
+        $OutputTxt.AppendText("`n There was an error configuring the mail contact")
+        ScrollDown
+        AppendLog -LogText $Error[0] -Time -Errors
+        $ErrorCount = 1
+    }
+
+If ($ErrorCount -gt 0)
+{ $OutputTxt.AppendText("`n Errors occurred during the account creation. See logs for details.") }
+Else
+{ $OutputTxt.AppendText("`n SUCCESS! No errors occurred.") }
 
 # Final account details for the new user are displayed on the output box and sent to the clipboard
 $Finished_MSG = @"
@@ -218,12 +329,15 @@ $Finished_MSG = @"
 
 The account for $Firstname $Lastname has been created with the following login details.
 
-        Username: $user
-        Password: $PassWD
+        Username: $NewUserName
+        Password: $NewUserPassword
 
 "@
-
-$OutputTxt.AppendText($Finished_MSG)
+Write-Host "Account creaion complete" -ForegroundColor Green
+AppendLog -LogText $Finished_MSG -Time
+AppendLog -LogText "Account creaion complete" -Footer
+$OutputTxt.AppendText("`n $Finished_MSG")
+ScrollDown
 $Finished_MSG | clip.exe
 ### End CreateAccount ###
 }
@@ -321,8 +435,8 @@ $DetailGroup.Location = New-Object System.Drawing.Size(13,7)
     $DetailGroup.Controls.Add($EmailLabel)
 
 # Account type group properties
-$accTypeGroup.Text = "Account Type"
-$accTypeGroup.Size = New-Object System.Drawing.Size(125,50)
+$accTypeGroup.Text     = "Account Type"
+$accTypeGroup.Size     = New-Object System.Drawing.Size(125,50)
 $accTypeGroup.Location = New-Object System.Drawing.Size(80,135)
     
     $Fusion_Radio.Text     = "Fusion"
@@ -351,7 +465,7 @@ $ConsoleGroup.Location = New-Object System.Drawing.Size(13,205)
     $OutputTxt.BackColor   = "White"
     $OutputTxt.Cursor      = "Hand"
     $OutputTxt.ScrollBars  = "ForcedVertical" 
-    $OutputTxt.Font = New-Object System.Drawing.Font("Courier",10)
+    $OutputTxt.Font = New-Object System.Drawing.Font("Courier",9)
 
     # Console group controls
     $ConsoleGroup.Controls.Add($OutputTxt)
@@ -391,26 +505,6 @@ $Create_Event = [System.EventHandler]{ # This event sets the required variables 
 
 $OutputTxt.Clear()
 
-# Sanitize user input
-$RequestTxt.Text.Trim()
-$RequestTxt.Text -replace '\s+'
-[string]$RequestNum = $RequestTxt.Text
-$RequestNum = $RequestNum.ToUpper()
-
-$FirstnameTxt.Text.Trim()
-$FirstnameTxt.Text -replace '\s+'
-[string]$Firstname = $FirstnameTxt.Text
-$Firstname = $Firstname.substring(0,1).toupper()+$Firstname.substring(1)
-
-$LastnameTxt.Text.Trim()
-$LastnameTxt.Text -replace '\s+'
-[string]$Lastname = $LastnameTxt.Text
-$Lastname = $Lastname.substring(0,1).toupper()+$Lastname.substring(1)
-
-$emailTXT.Text.Trim()
-$emailTXT.Text -replace '\s+'
-$EmailAddress = $emailTXT.Text
-
 If (-not($RequestTxt.Text)){ # Checks for mandatory inputs
     Write-Warning "You must enter a request number"
     [Microsoft.VisualBasic.Interaction]::MsgBox("You must enter a request number", "OKOnly,SystemModal,Exclamation", "Warning")
@@ -431,14 +525,36 @@ If (-not($RequestTxt.Text)){ # Checks for mandatory inputs
         Write-Warning "Invalid email address"
         [Microsoft.VisualBasic.Interaction]::MsgBox("Invalid email address", "OKOnly,SystemModal,Exclamation", "Warning")
         }
-    Elseif (-not($Fusion_Radio)){
+    Elseif ((Get-Existing -Email $emailTXT.Text) -eq $true )
+        {
+            Write-Warning 'The email address already exists as a user or mail contact'
+            $mail = $emailTXT.Text
+            [Microsoft.VisualBasic.Interaction]::MsgBox("An object with the email $mail already exists.", "OKOnly,SystemModal,Critical", "Error")
         }
-
     Else
         {
             If ($Fusion_Radio.Checked -eq $true){
                 $AccountType = "Fusion"} Else {
                 $AccountType = "DVIR"}
+             # Sanitize user input
+            $RequestTxt.Text.Trim()
+            $RequestTxt.Text -replace '\s+'
+            [string]$RequestNum = $RequestTxt.Text
+            $RequestNum = $RequestNum.ToUpper()
+
+            $FirstnameTxt.Text.Trim()
+            $FirstnameTxt.Text -replace '\s+'
+            [string]$Firstname = $FirstnameTxt.Text
+            $Firstname = $Firstname.substring(0,1).toupper()+$Firstname.substring(1)
+
+            $LastnameTxt.Text.Trim()
+            $LastnameTxt.Text -replace '\s+'
+            [string]$Lastname = $LastnameTxt.Text
+            $Lastname = $Lastname.substring(0,1).toupper()+$Lastname.substring(1)
+
+            $emailTXT.Text.Trim()
+            $emailTXT.Text -replace '\s+'
+            $EmailAddress = $emailTXT.Text
 
 $CreatingAccountMSG = @"
 
@@ -449,7 +565,7 @@ Creating a $AccountType account for $Firstname $Lastname at $EmailAddress for Re
             $OutputTxt.AppendText($CreatingAccountMSG)
             $OutputTxt.AppendText("`n Please wait...")
             AppendLog -LogText $CreatingAccountMSG -Header
-            CreateAccount -AccountType $AccountType -Firstname $Firstname -Lastname $Lastname -Email $EmailAddress 
+            CreateAccount -AccountType $AccountType -Firstname $Firstname -Lastname $Lastname -EmailAddress $EmailAddress -RequestNumber $RequestNum
         }
 
 } # End of Create_Event
