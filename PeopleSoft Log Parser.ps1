@@ -76,7 +76,7 @@ catch
 {
     Add-Content -Value "An error occurred while parsing the log file" -Path $TraceLog
     Add-Content -Value "$($_.Exception.Message)" -Path $TraceLog
-    Send-MailMessage -Body $($_.Exception.Message) -From 'AssistAlert@cpfs.wa.gov.au' -SmtpServer 'webmail.cpfs.wa.gov.au' -Subject 'Error processing Assist logs' -To "David.Nauendorf@cpfs.wa.gov.au"
+    Send-MailMessage -Body $($_.Exception.Message) -From 'AssistAlert@cpfs.wa.gov.au' -SmtpServer '' -Subject 'Error processing Assist logs' -To "David.Nauendorf@cpfs.wa.gov.au"
 }
 
 
@@ -106,8 +106,8 @@ tr:nth-child(odd) { background: #b8d1f3; }
         To         = $EmailRecipients
         Body       = "$( $RecentErrors | ConvertTo-Html @HTMLDetails)" 
         Subject    = 'NEW - Assist is [STUCK] - ' + $Server + " " + $log
-        SmtpServer = 'webmail.cpfs.wa.gov.au'
-        From       = 'AssistAlert@cpfs.wa.gov.au'
+        SmtpServer = ''
+        From       = ''
         BodyAsHtml = $True 
     } 
 
