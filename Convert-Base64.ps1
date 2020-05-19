@@ -71,7 +71,7 @@ Param
         ElseIf ($FromBase64)
         {
             Write-Verbose -Message "Writing Base64 to file $ToFilePath"
-            $ByteContent = [Convert]::FromBase64String($Bytes)
+            $ByteContent = [Convert]::FromBase64String($Base64String)
             [System.IO.File]::WriteAllBytes($ToFilePath,$ByteContent)
         }
     }
