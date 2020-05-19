@@ -16,7 +16,7 @@ Get-ADUser -Filter * -Properties DistinguishedName,EmployeeID,EmployeeNumber,Sam
 Select-Object DistinguishedName,EmployeeID,EmployeeNumber,SamAccountName,Name,GivenName,Initials,Surname,DisplayName,Description,Title,EmailAddress,Department,Company,CannotChangePassword,PasswordNeverExpires,PasswordNotRequired,LockedOut,AccountExpirationDate,LastLogonDate,PasswordLastSet,whenCreated,@{n='LastLogon';e={[DateTime]::FromFileTime($_.LastLogon)}},@{n='msDS-UserPasswordExpiryTimeComputed';e={[DateTime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}},whenChanged, Enabled |
 Export-CSV "$SavePath\All_Users_$domain-$Date.csv"
 
-Send-MailMessage -To KineticIT_Security@cpfs.wa.gov.au -From ProductionDomain@cpfs.wa.gov.au -Subject "Users/Computers Export from $domain on $FullDate" -SmtpServer "DC01SV043.ad.dcd.wa.gov.au" `
+Send-MailMessage -To SomeEmail@domain.com -From SomeEmail@domain.com -Subject "Users/Computers Export from $domain on $FullDate" -SmtpServer "DC01SV043.ad.dcd.wa.gov.au" `
 -Attachments "$SavePath\All_Users_$domain-$Date.csv","$SavePath\All_Computers_$domain-$Date.csv"
 
 $Attachment1 = "\\ServerName\C$\temp\ADobjectsExport\$Date\"+"All_Users_DMZ-$Date.csv"
