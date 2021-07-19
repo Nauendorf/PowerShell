@@ -9,3 +9,18 @@ Function Test-ADAuthentication {
     if ( ! ( $result.Name ) ) { return $false }
     return $true
 }
+
+function Authenticate
+{
+    param ([PSCredential]$Credential)
+
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    $obj = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('machine', $env:COMPUTERNAME)
+
+    $AuthResult = $obj.ValidateCredentials($Credential.UserName, 
+                                            ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Credential.Password))) ) 
+
+    return $AuthResult
+}
+
