@@ -1,0 +1,11 @@
+
+Function Test-ADAuthentication {
+    
+    param ([PSCredential]$Credential)
+    $result = [directoryservices.directoryentry]::new("LDAP://rootDSE", $Credential.UserName, (  
+              [Runtime.InteropServices.Marshal]::PtrToStringUni(
+              [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode(($Credential.Password)))))
+
+    if ( ! ( $result.Name ) ) { return $false }
+    return $true
+}
