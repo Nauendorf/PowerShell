@@ -1,0 +1,41 @@
+function ConvertTo-MimeMultiPartBody {
+    param([Parameter(Mandatory=$true)][string]$Boundary, [Parameter(Mandatory=$true)][hashtable]$Data)
+
+    $body = "";
+    $Data.GetEnumerator() |% {
+        $name = $_.Key
+        $value = $_.Value
+
+        $body += "--$Boundary`r`n"
+        $body += "Content-Disposition: form-data; name=`"$name`""
+        if ($value -is [byte[]]) {
+            $fileName = $Data['FileName']
+            if(!$fileName) { $fileName = $name }
+            $body += "; filename=`"$fileName`"`r`n"
+            $body += 'Content-Type: application/octet-stream'
+            $value = [System.Text.Encoding]::GetEncoding("ISO-8859-1").GetString($value)
+        }
+        $body += "`r`n`r`n" + $value + "`r`n"
+    }
+    return $body + "--$boundary--"
+}
+
+
+$emaildomain = ""
+$apikey = ""
+$url = "https://api.mailgun.net/v2/$($emaildomain)/messages"
+$headers = @{
+    Authorization = "Basic " + ([System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("api:$($apikey)")))
+}
+
+$email_parms = @{
+    from = "azureautomation@alerts.itma.com.au"
+    to = "david@itma.com.au"
+    subject = "CTP - DNS Filter User count - $(Get-Date)"
+    html = $html
+    filename = "C:\temp\CTP - DNS Filter User count.csv"
+    attachment = ([IO.File]::ReadAllBytes("C:\temp\CTP - DNS Filter User count.csv"));
+}
+$boundary = [guid]::NewGuid().ToString()
+$body = ConvertTo-MimeMultiPartBody $boundary $email_parms
+Invoke-RestMethod -Uri $url -Method Post -Headers $headers -Body $body -ContentType "multipart/form-data; boundary=$boundary"
